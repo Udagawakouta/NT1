@@ -62,7 +62,7 @@ void ChatServer(void)
 
 	fromlen = (int)sizeof(from);
 
-	s = accept(listen_s,(SOCKADDR*) & from, &fromlen);
+	s = accept(listen_s, (SOCKADDR*)&from, &fromlen);
 
 	if (s == INVALID_SOCKET) {
 		printf("acceptエラー\n");
@@ -165,20 +165,19 @@ void ChatClient()
 
 		/*　スライドを参考に送受信処理を入力　*/
 		int nRcv;
-
 		char szBuf[1024];
-
-		nRcv = send(s, szBuf, (int)strlen(szBuf), 0);
 
 		szBuf[nRcv] = '\0';
 
-		printf("受信-->%s\n", szBuf);
 		printf("送信-->");
-
 		scanf_s("%s", szBuf, 1024);
 		fflush(stdin);
 
+		send(s, szBuf, (int)strlen(szBuf), 0);
+
+		nRcv = recv(s, szBuf, sizeof(szBuf) - 1, 0);
 		recv(s, szBuf, sizeof(szBuf) - 1, 0);
+		printf("受信-->%s\n", szBuf);
 	}
 
 	/* ソケットを閉じる */
