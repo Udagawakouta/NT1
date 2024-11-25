@@ -167,8 +167,6 @@ void ChatClient()
 		int nRcv;
 		char szBuf[1024];
 
-		szBuf[nRcv] = '\0';
-
 		printf("‘—M-->");
 		scanf_s("%s", szBuf, 1024);
 		fflush(stdin);
@@ -176,7 +174,8 @@ void ChatClient()
 		send(s, szBuf, (int)strlen(szBuf), 0);
 
 		nRcv = recv(s, szBuf, sizeof(szBuf) - 1, 0);
-		recv(s, szBuf, sizeof(szBuf) - 1, 0);
+		szBuf[nRcv] = '\0';
+		//recv(s, szBuf, sizeof(szBuf) - 1, 0);
 		printf("ŽóM-->%s\n", szBuf);
 	}
 
