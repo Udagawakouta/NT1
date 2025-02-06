@@ -1,64 +1,121 @@
-#include <windows.h>
+#include <Novice.h>
+#include <math.h>
+#include <fstream>
 #include <process.h>
 #include <mmsystem.h>
 
 #pragma comment(lib, "wsock32.lib")
 #pragma comment(lib, "winmm.lib")
 
+DWORD WINAPI threadfunc(void*);
 
-HWND hwMain;
-
-// 送受信する座標データ
 struct POS
 {
 	int x;
 	int y;
 };
-POS pos1P, pos2P, old_pos1P;
+POS pos1P, pos2P, old_pos2P;
 RECT rect;
+SOCKET sWait;
+HWND hwMain;
 
-// プロトタイプ宣言
-LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-DWORD WINAPI Threadfunc(void*);
+const char kWindowTitle[] = "KAMATA ENGINEクライアント";
 
-int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_  HINSTANCE hPrevInstance, _In_ LPSTR szCmdLine, _In_ int iCmdShow) {
+typedef struct {
+	float x;
+	float y;
+}Vector2;
 
-	MSG  msg;
-	WNDCLASS wndclass;
+typedef struct {
+	Vector2 center;
+	float radius;
+}Circle;
+
+// キー入力結果を受け取る箱
+Circle a, b;
+Vector2 center = { 100,100 };
+char keys[256] = { 0 };
+char preKeys[256] = { 0 };
+int color = RED;
+
+// Windowsアプリでのエントリーポイント(main関数)
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+
 	WSADATA wdData;
+	static HANDLE hThread;
+	static DWORD dwID;
 
-	wndclass.style = CS_HREDRAW | CS_VREDRAW;
-	wndclass.lpfnWndProc = WndProc;
-	wndclass.cbClsExtra = 0;
-	wndclass.cbWndExtra = 0;
-	wndclass.hInstance = hInstance;
-	wndclass.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-	wndclass.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wndclass.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
-	wndclass.lpszMenuName = NULL;
-	wndclass.lpszClassName = "CWindow";
 
-	RegisterClass(&wndclass);
+	// ライブラリの初期化
+	Novice::Initialize(kWindowTitle, 1280, 720);
+
+	hwMain = GetDesktopWindow();
+
+	// 白い球
+	a.center.x = 400;
+	a.center.y = 400;
+	a.radius = 100;
+
+	// 赤い球
+	b.center.x = 200;
+	b.center.y = 200;
+	b.radius = 50;
 
 	// winsock初期化
 	WSAStartup(MAKEWORD(2, 0), &wdData);
 
-	hwMain = CreateWindow("CWindow", "Client",
-		WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-		800, 600, NULL, NULL, hInstance, NULL);
+	// データを送受信処理をスレッド（WinMainの流れに関係なく動作する処理の流れ）として生成
+	hThread = (HANDLE)CreateThread(NULL, 0, &threadfunc, (LPVOID)&a, 0, &dwID);
 
-	// ウインドウ表示
-	ShowWindow(hwMain, iCmdShow);
+	// ウィンドウの×ボタンが押されるまでループ
+	while (Novice::ProcessMessage() == 0) {
+		// フレームの開始
+		Novice::BeginFrame();
 
-	// ウィンドウ領域更新(WM_PAINTメッセージを発行)
-	UpdateWindow(hwMain);
+		// キー入力を受け取る
+		memcpy(preKeys, keys, 256);
+		Novice::GetHitKeyStateAll(keys);
 
-	// メッセージループ
-	while (GetMessage(&msg, NULL, 0, 0))
-	{
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
+		if (keys[DIK_UP] != 0) {
+			a.center.y -= 5;
+		}
+		if (keys[DIK_DOWN] != 0) {
+			a.center.y += 5;
+		}
+		if (keys[DIK_RIGHT] != 0) {
+			a.center.x += 5;
+		}
+		if (keys[DIK_LEFT] != 0) {
+			a.center.x -= 5;
+		}
+
+		/// ↓更新処理ここから
+		float distance =
+			sqrtf((float)pow((double)a.center.x - (double)b.center.x, 2) +
+				(float)pow((double)a.center.y - (double)b.center.y, 2));
+
+		if (distance <= a.radius + b.radius)
+			color = BLUE;
+		else
+			color = RED;
+		/// ↑更新処理ここまで
+
+		/// ↓描画処理ここから
+		Novice::DrawEllipse((int)a.center.x, (int)a.center.y, (int)a.radius, (int)a.radius, 0.0f, WHITE, kFillModeSolid);
+		Novice::DrawEllipse((int)b.center.x, (int)b.center.y, (int)b.radius, (int)b.radius, 0.0f, color, kFillModeSolid);
+		/// ↑描画処理ここまで
+
+		// フレームの終了
+		Novice::EndFrame();
+
+		// ESCキーが押されたらループを抜ける
+		if (preKeys[DIK_ESCAPE] == 0 && keys[DIK_ESCAPE] != 0) {
+			break;
+		}
 	}
+
+	// ライブラリの終了
+	Novice::Finalize();
 
 	// winsock終了
 	WSACleanup();
@@ -66,183 +123,57 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_  HINSTANCE hPrevInstance, 
 	return 0;
 }
 
-// ウインドウプロシージャ
-LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
-
-	static HDC hdc, mdc, mdc2P;
-	static PAINTSTRUCT ps;
-	static HBITMAP hBitmap;
-	static HBITMAP hBitmap2P;
-	static char str[256];
-
-	static HANDLE hThread;
-	static DWORD dwID;
-
-	// WINDOWSから飛んで来るメッセージに対応する処理の記述
-	switch (iMsg) {
-	case WM_CREATE:
-		// リソースからビットマップを読み込む（1P）
-		hBitmap = LoadBitmap(
-			((LPCREATESTRUCT)lParam)->hInstance,
-			/*☆文字列*/);
-
-		// ディスプレイと互換性のある論理デバイス（デバイスコンテキスト）を取得（1P）
-		mdc = CreateCompatibleDC(NULL);
-
-		// 論理デバイスに読み込んだビットマップを展開（1P）
-		SelectObject(/*☆*/, /*☆*/);
-
-		// リソースからビットマップを読み込む（2P）
-		/*☆*/ = LoadBitmap(
-			((LPCREATESTRUCT)lParam)->hInstance,
-			/*☆文字列*/);
-
-		// （2P）
-		/*☆*/ = CreateCompatibleDC(NULL);
-		// （2P）
-		SelectObject(/*☆*/, /*☆*/);
-
-		// 位置情報を初期化
-		pos1P.x = pos1P.y = 0;
-		pos2P.x = pos2P.y = 100;
-		// データを送受信処理をスレッド（WinMainの流れに関係なく動作する処理の流れ）として生成。
-		// データ送受信をスレッドにしないと何かデータを受信するまでRECV関数で止まってしまう。
-		hThread = (HANDLE)CreateThread(NULL, 0, /*☆*/, (LPVOID)&pos2P, 0, &dwID);
-		break;
-	case WM_KEYDOWN:
-		switch (wParam) {
-		case VK_ESCAPE:
-			SendMessage(hwnd, WM_CLOSE, NULL, NULL);
-			break;
-		case VK_RIGHT:
-			//☆　→キー押されたらクライアント側キャラのX座標を更新
-			break;
-		case VK_LEFT:
-			//☆　←キー押されたらクライアント側キャラのX座標を更新
-			break;
-		case VK_DOWN:
-			//☆　↓キー押されたらクライアント側キャラのY座標を更新
-			break;
-		case VK_UP:
-			//☆　↑キー押されたらクライアント側キャラのY座標を更新
-			break;
-		}
-
-		// 指定ウィンドウの指定矩形領域を更新領域に追加
-		// hWnd	 ：ウインドウのハンドル
-		// lprec ：RECTのポインタ．NULLなら全体
-		// bErase：TRUEなら更新領域を背景色で初期化， FALSEなら現在の状態から上書き描画
-		// 返り値：成功すればTRUE，それ以外はFALSE
-		InvalidateRect(hwnd, NULL, TRUE);
-
-		// WM_PAINTメッセージがウィンドウに送信される
-		UpdateWindow(hwnd);
-		break;
-	case WM_PAINT:
-		// 更新領域に描画する為に必要な描画ツール（デバイスコンテキスト）を取得
-		hdc = BeginPaint(hwnd, &ps);
-
-		// 転送元デバイスコンテキストから転送先デバイスコンテキストへ
-		// 長方形カラーデータのビットブロックを転送
-		// サーバ側キャラ描画
-		BitBlt(hdc, pos1P.x, pos1P.y, 32, 32, mdc, 0, 0, SRCCOPY);
-		// クライアント側キャラ描画
-		BitBlt(hdc, pos2P.x, pos2P.y, 32, 32, mdc2P, 0, 0, SRCCOPY);
-
-		wsprintf(str, "サーバ側：X:%d Y:%d　　クライアント側：X:%d Y:%d", pos1P.x, pos1P.y, pos2P.x, pos2P.y);
-		SetWindowText(hwMain, str);
-
-		// 更新領域を空にする
-		EndPaint(hwnd, &ps);
-		return 0;
-
-	case WM_DESTROY:
-		/* ウインドウ破棄時 */
-		DeleteObject(hBitmap);
-		DeleteDC(mdc);
-		DeleteObject(hBitmap2P);
-		DeleteDC(mdc2P);
-
-		PostQuitMessage(0);
-
-		return 0;
-	}
-
-	return DefWindowProc(hwnd, iMsg, wParam, lParam);
-}
-
-/* 通信スレッド関数 */
-DWORD WINAPI Threadfunc(void* px) {
+// 通信スレッド関数
+DWORD WINAPI threadfunc(void* test) {
 
 	SOCKET sConnect;
+	struct sockaddr_in saConnect, saLocal;
+	DWORD dwAddr;
+	char addr[20]; // IPアドレス格納配列
+
+	test = 0; //引数確認
 	WORD wPort = 8000;
-	SOCKADDR_IN saConnect;
-	int iLen, iRecv;
-	char szServer[1024] = { "自分PCのIPアドレス" };
 
-	// ソケットをオープン
-	sConnect = socket(/*☆*/, /*☆*/, 0);
+	// ファイル読み込み (#include <fstream> が必要)
+	std::ifstream ifs("ip.txt");
+	ifs.getline(addr, sizeof(addr));
 
-	if (sConnect == INVALID_SOCKET) {
-		SetWindowText(hwMain, "ソケットオープンエラー");
-		return 1;
-	}
+	dwAddr = inet_addr(addr);
+	sConnect = socket(PF_INET, SOCK_STREAM, 0);
 
-	// サーバーを名前で取得する
-	HOSTENT* lpHost;
+	ZeroMemory(&saConnect, sizeof(sockaddr_in));
+	ZeroMemory(&saLocal, sizeof(sockaddr_in));
 
-	lpHost = gethostbyname(szServer);
+	saLocal.sin_family = AF_INET;
+	saLocal.sin_addr.s_addr = INADDR_ANY;
+	saLocal.sin_port = 0;
 
-	if (lpHost == NULL) {
-		/* サーバーをIPアドレスで取得する */
-		iLen = inet_addr(szServer);
-		lpHost = gethostbyaddr((char*)&iLen, 4, AF_INET);
-	}
+	bind(sConnect, (LPSOCKADDR)&saLocal, sizeof(saLocal));
 
-	// クライアントソケットをサーバーに接続
-	memset(&saConnect, 0, sizeof(SOCKADDR_IN));
-	saConnect.sin_family = lpHost->h_addrtype;
-	saConnect.sin_port = htons(htons(/*☆*/);
-	saConnect.sin_addr.s_addr = *((u_long*)lpHost->h_addr);
+	saConnect.sin_family = AF_INET;
+	saConnect.sin_addr.s_addr = dwAddr;
+	saConnect.sin_port = htons(wPort);
 
-	if (connect(sConnect, (SOCKADDR*)&saConnect, sizeof(saConnect)) == SOCKET_ERROR) {
-		SetWindowText(hwMain, "サーバーと接続できませんでした");
+	// サーバーに接続
+	if (connect(sConnect, (sockaddr*)(&saConnect), sizeof(saConnect)) == SOCKET_ERROR)
+	{
 		closesocket(sConnect);
+		WSACleanup();
 		return 1;
 	}
-
-	SetWindowText(hwMain, "サーバーに接続できました");
-
-	iRecv = 0;
 
 	while (1)
 	{
-		// クライアント側キャラの位置情報を送信
-		send(/*☆*/, (const char*)/*☆*/, sizeof(POS), 0);
+		// 2P（クライアント側）の座標情報を送信
+		send(sConnect, (const char*)&a, sizeof(Circle), 0);
 
-		// 受信したクライアントが操作するキャラの座標が更新されていたら
-		// 更新領域を作ってInvalidateRect関数でWM_PAINTメッセージを発行、キャラを再描画する
-		if (old_pos1P.x != pos1P.x || old_pos1P.y != pos1P.y)
-		{
-			rect.left = old_pos1P.x - 10;
-			rect.top = old_pos1P.y - 10;
-			rect.right = old_pos1P.x + 42;
-			rect.bottom = old_pos1P.y + 42;
-			InvalidateRect(hwMain, &rect, TRUE);
-		}
+		// サーバから1P座標情報を取得
+		int nRcv = recv(sConnect, (char*)&b, sizeof(Circle), 0);
 
-		int nRcv;
-
-		old_pos1P = pos1P;
-
-		// サーバ側キャラの位置情報を受け取り
-		nRcv = recv(/*☆*/, (char*)/*☆*/, sizeof(POS), 0);
-
+		// 通信途絶えたらループ終了
 		if (nRcv == SOCKET_ERROR)break;
-
 	}
 
-	shutdown(sConnect, 2);
 	closesocket(sConnect);
 
 	return 0;
